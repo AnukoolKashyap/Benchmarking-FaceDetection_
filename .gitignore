@@ -1,0 +1,11 @@
+# Ignore all captured images
+captured_faces/*
+
+# Keep the folder itself
+!captured_faces/.gitkeep
+
+# Ignore RTSP credentials file
+stream.py
+
+# Ignore YOLO model weights
+yolov8n-face.pt
