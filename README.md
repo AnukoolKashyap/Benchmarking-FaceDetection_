@@ -2,7 +2,7 @@
 
 A Python pipeline that connects to a live RTSP camera feed, detects human faces using a YOLO face model, and saves every frame containing one or more faces into a local folder. Runs at a throttled rate (default 5 FPS) and logs all detections with bounding box metadata.
 
-Built during an internship project at ITransline Technologies, New Delhi
+Built during an internship project at Transline Technologies, New Delhi
 
 ---
 
