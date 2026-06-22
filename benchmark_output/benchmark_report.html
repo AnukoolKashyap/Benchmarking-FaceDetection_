@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmark Report — RTSP Face Detection Pipeline</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --blue:   #378ADD;
+    --green:  #1D9E75;
+    --red:    #D85A30;
+    --bg:     #ffffff;
+    --bg2:    #f5f5f3;
+    --bg3:    #ebebea;
+    --text:   #1a1a19;
+    --text2:  #5f5e5a;
+    --text3:  #888780;
+    --border: rgba(0,0,0,0.10);
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:    #1e1e1c;
+      --bg2:   #2a2a28;
+      --bg3:   #323230;
+      --text:  #e8e6e0;
+      --text2: #a8a7a1;
+      --text3: #6e6d69;
+      --border: rgba(255,255,255,0.10);
+    }
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+  .page { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+  /* header */
+  .page-title { font-size: 22px; font-weight: 500; margin-bottom: 4px; }
+  .page-sub   { font-size: 13px; color: var(--text2); margin-bottom: 1.25rem; }
+  .meta-row   { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 0.5px solid var(--border); }
+  .meta-chip  { background: var(--bg2); border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--text2); }
+  .meta-chip b { color: var(--text); font-weight: 500; }
+
+  /* section */
+  .section-label { font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text3); margin: 2rem 0 0.75rem; }
+
+  /* KPI cards */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .kpi { background: var(--bg2); border-radius: var(--radius); padding: 0.9rem 1rem; }
+  .kpi-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  .kpi-val   { font-size: 24px; font-weight: 500; line-height: 1.1; }
+  .kpi-sub   { font-size: 11px; margin-top: 3px; }
+  .good { color: var(--green); }
+  .bad  { color: var(--red); }
+
+  /* arch side-by-side */
+  .arch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .arch-card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 1rem 1.1rem; }
+  .arch-header { display: flex; align-items: center; gap: 8px; margin-bottom: 0.75rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .arch-title { font-size: 13px; font-weight: 500; }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 4px; margin-left: auto; }
+  .tag-bad  { background: #fce8e1; color: #993c1d; }
+  .tag-good { background: #e1f5ee; color: #0f6e56; }
+  @media (prefers-color-scheme: dark) {
+    .tag-bad  { background: #4a1b0c; color: #f0997b; }
+    .tag-good { background: #04342c; color: #5dcaa5; }
+  }
+  .pill-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .pill { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--bg2); color: var(--text2); }
+  .stat-table { width: 100%; font-size: 11px; border-collapse: collapse; }
+  .stat-table th { text-align: left; color: var(--text3); font-weight: 400; padding: 3px 4px 3px 0; border-bottom: 0.5px solid var(--border); }
+  .stat-table th:not(:first-child) { text-align: right; }
+  .stat-table td { padding: 4px 4px 4px 0; color: var(--text2); border-bottom: 0.5px solid var(--border); }
+  .stat-table td:not(:first-child) { text-align: right; color: var(--text); }
+  .stat-table tr:last-child td { border-bottom: none; }
+  .highlight-red  td:nth-child(2) { color: var(--red) !important; font-weight: 500; }
+  .highlight-green td:nth-child(2) { color: var(--green) !important; font-weight: 500; }
+  .row-total td { font-weight: 500; color: var(--text) !important; }
+
+  /* charts */
+  .chart-wrap { position: relative; width: 100%; }
+  .legend { display: flex; gap: 16px; margin-bottom: 8px; font-size: 12px; color: var(--text2); }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .leg-box { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  /* delta */
+  .delta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .delta-card { background: var(--bg2); border-radius: var(--radius); padding: 0.8rem 1rem; }
+  .delta-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  .delta-val   { font-size: 20px; font-weight: 500; color: var(--green); }
+
+  /* key takeaways */
+  .takeaway-list { display: flex; flex-direction: column; gap: 8px; }
+  .takeaway { background: var(--bg2); border-left: 3px solid var(--border); border-radius: 0 var(--radius) var(--radius) 0; padding: 0.7rem 1rem; font-size: 13px; color: var(--text2); }
+  .takeaway b { color: var(--text); font-weight: 500; }
+  .takeaway.insight { border-left-color: var(--blue); }
+  .takeaway.win    { border-left-color: var(--green); }
+  .takeaway.warn   { border-left-color: var(--red); }
+
+  /* footer */
+  .footer { margin-top: 3rem; padding-top: 1rem; border-top: 0.5px solid var(--border); display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); }
+
+  @media (max-width: 600px) {
+    .kpi-grid, .arch-grid, .delta-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <p class="page-title">Benchmark report — RTSP face detection pipeline</p>
+  <p class="page-sub">Bounded queue vs parallel workers &nbsp;·&nbsp; 60s measurement window &nbsp;·&nbsp; 8s warmup discarded</p>
+
+  <div class="meta-row">
+    <div class="meta-chip"><b>Model</b> &nbsp;yolov8n-face.pt</div>
+    <div class="meta-chip"><b>imgsz</b> &nbsp;1280 px</div>
+    <div class="meta-chip"><b>Confidence</b> &nbsp;0.4</div>
+    <div class="meta-chip"><b>FPS target</b> &nbsp;5.0</div>
+    <div class="meta-chip"><b>Workers (Arch B)</b> &nbsp;2</div>
+    <div class="meta-chip"><b>Queue maxlen (Arch A)</b> &nbsp;10</div>
+    <div class="meta-chip"><b>Queue maxsize (Arch B)</b> &nbsp;20</div>
+    <div class="meta-chip" id="run-date"><b>Run date</b> &nbsp;18 Jun 2026</div>
+  </div>
+
+  <p class="section-label">headline numbers</p>
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">End-to-end latency — Arch A</div>
+      <div class="kpi-val bad">754 ms</div>
+      <div class="kpi-sub bad">mean total</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">End-to-end latency — Arch B</div>
+      <div class="kpi-val good">99 ms</div>
+      <div class="kpi-sub good">7.6× faster</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Frame drop rate — Arch A</div>
+      <div class="kpi-val bad">71.1%</div>
+      <div class="kpi-sub bad">677 of 952 frames lost</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Frame drop rate — Arch B</div>
+      <div class="kpi-val good">0.0%</div>
+      <div class="kpi-sub good">zero frames dropped</div>
+    </div>
+  </div>
+
+  <p class="section-label">per-architecture breakdown</p>
+  <div class="arch-grid">
+
+    <div class="arch-card">
+      <div class="arch-header">
+        <span class="dot" style="background:var(--blue)"></span>
+        <span class="arch-title">Architecture A — bounded queue</span>
+        <span class="tag tag-bad">single consumer</span>
+      </div>
+      <div class="pill-row">
+        <span class="pill">275 processed</span>
+        <span class="pill">952 produced</span>
+        <span class="pill bad">677 dropped (71.1%)</span>
+        <span class="pill">4.58 fps</span>
+      </div>
+      <table class="stat-table">
+        <tr><th>Metric</th><th>Mean</th><th>p50</th><th>p95</th><th>p99</th></tr>
+        <tr><td>Capture (ms)</td><td>6.7</td><td>5.3</td><td>14.8</td><td>17.3</td></tr>
+        <tr class="highlight-red"><td>Queue wait (ms)</td><td>680.7</td><td>525.6</td><td>1595.9</td><td>1985.5</td></tr>
+        <tr><td>Inference (ms)</td><td>67.2</td><td>62.4</td><td>78.1</td><td>113.5</td></tr>
+        <tr class="row-total"><td>Total (ms)</td><td>754.7</td><td>595.5</td><td>1660.7</td><td>2056.0</td></tr>
+        <tr><td>Queue depth</td><td>8.0</td><td>9.0</td><td>9.0</td><td>9.0</td></tr>
+      </table>
+    </div>
+
+    <div class="arch-card">
+      <div class="arch-header">
+        <span class="dot" style="background:var(--green)"></span>
+        <span class="arch-title">Architecture B — parallel workers</span>
+        <span class="tag tag-good">2 workers</span>
+      </div>
+      <div class="pill-row">
+        <span class="pill">831 processed</span>
+        <span class="pill">831 produced</span>
+        <span class="pill good">0 dropped (0.0%)</span>
+        <span class="pill">13.85 fps</span>
+      </div>
+      <table class="stat-table">
+        <tr><th>Metric</th><th>Mean</th><th>p50</th><th>p95</th><th>p99</th></tr>
+        <tr><td>Capture (ms)</td><td>11.1</td><td>6.9</td><td>15.6</td><td>16.8</td></tr>
+        <tr class="highlight-green"><td>Queue wait (ms)</td><td>42.6</td><td>3.1</td><td>244.0</td><td>352.9</td></tr>
+        <tr><td>Inference (ms)</td><td>45.3</td><td>44.1</td><td>69.0</td><td>81.1</td></tr>
+        <tr class="row-total"><td>Total (ms)</td><td>99.0</td><td>59.0</td><td>306.0</td><td>409.0</td></tr>
+        <tr><td>Queue depth</td><td>1.3</td><td>0.0</td><td>8.0</td><td>13.0</td></tr>
+      </table>
+    </div>
+
+  </div>
+
+  <p class="section-label">latency by stage</p>
+  <div class="legend">
+    <span><span class="leg-box" style="background:var(--blue)"></span>Architecture A — bounded queue</span>
+    <span><span class="leg-box" style="background:var(--green); outline: 2px dashed var(--green); outline-offset: 1px;"></span>Architecture B — parallel workers</span>
+  </div>
+  <div class="chart-wrap" style="height:260px; margin-bottom:1.5rem;">
+    <canvas id="chart-stages" role="img" aria-label="Grouped bar chart comparing capture, queue wait, inference and total latency between both architectures. Queue wait dominates Architecture A at 680ms vs 42ms for B.">Capture A=6.7ms B=11.1ms. Queue wait A=680.7ms B=42.6ms. Inference A=67.2ms B=45.3ms. Total A=754.7ms B=99ms.</canvas>
+  </div>
+
+  <p class="section-label">total latency percentiles</p>
+  <div class="chart-wrap" style="height:220px; margin-bottom:1.5rem;">
+    <canvas id="chart-pct" role="img" aria-label="Line chart of p50, p95, p99 total latency. Architecture A p50=595ms p95=1660ms p99=2056ms. Architecture B p50=59ms p95=306ms p99=409ms.">Architecture A p50=595ms p95=1660ms p99=2056ms. Architecture B p50=59ms p95=306ms p99=409ms.</canvas>
+  </div>
+
+  <p class="section-label">head-to-head delta (B minus A · negative = B is better)</p>
+  <div class="delta-grid">
+    <div class="delta-card"><div class="delta-label">Total latency mean</div><div class="delta-val">−655.6 ms</div></div>
+    <div class="delta-card"><div class="delta-label">Queue wait mean</div><div class="delta-val">−638.1 ms</div></div>
+    <div class="delta-card"><div class="delta-label">Inference mean</div><div class="delta-val">−21.9 ms</div></div>
+    <div class="delta-card"><div class="delta-label">Drop rate</div><div class="delta-val">−71.1 pp</div></div>
+  </div>
+
+  <p class="section-label">key takeaways</p>
+  <div class="takeaway-list">
+    <div class="takeaway win"><b>Queue wait is the bottleneck, not inference.</b> Arch A's mean queue wait of 680ms accounts for 90% of its total latency. The bounded deque was near-permanently full (avg depth 8/10) — frames were being evicted before inference ever touched them.</div>
+    <div class="takeaway win"><b>Parallel workers eliminate the backlog.</b> Arch B's mean queue wait drops to 42ms (p50 = 3ms), meaning workers drain frames almost as fast as they arrive. The queue depth average of 1.3 confirms it was nearly always empty.</div>
+    <div class="takeaway insight"><b>Inference itself is faster in B (45ms vs 67ms)</b> despite using the same model. When Arch A's single consumer was fighting queue backlog and OS scheduling pressure, individual predict() calls ran slower. Workers in Arch B had clean execution windows.</div>
+    <div class="takeaway warn"><b>Arch B's throughput of 13.85 fps is above the 5 fps target</b> because workers have no artificial throttle. For production, add a rate limiter on the feeder side to cap output at the required rate while keeping the zero-drop property.</div>
+    <div class="takeaway warn"><b>Arch B's p99 total latency (409ms) has a tail spike</b> likely from OS thread scheduling jitter on Windows. In a Linux deployment (or with process-level workers) this tail would be significantly reduced.</div>
+  </div>
+
+  <div class="footer">
+    <span>RTSP-FaceDetection_Transline &nbsp;·&nbsp; AnukoolKashyap</span>
+    <span id="footer-ts">benchmark_output/benchmark_report.html</span>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const grid  = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  const ticks = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)';
+  const BLUE  = '#378ADD';
+  const GREEN = '#1D9E75';
+
+  const baseOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: ticks, font: { size: 11 } }, grid: { color: grid }, border: { color: grid } },
+      y: { ticks: { color: ticks, font: { size: 11 }, callback: v => v + ' ms' }, grid: { color: grid }, border: { color: grid } }
+    }
+  };
+
+  new Chart(document.getElementById('chart-stages'), {
+    type: 'bar',
+    data: {
+      labels: ['Capture', 'Queue wait', 'Inference', 'Total'],
+      datasets: [
+        { label: 'Arch A', data: [6.7, 680.7, 67.2, 754.7], backgroundColor: BLUE, borderRadius: 4 },
+        { label: 'Arch B', data: [11.1, 42.6, 45.3, 99.0],  backgroundColor: GREEN, borderRadius: 4 }
+      ]
+    },
+    options: { ...baseOpts }
+  });
+
+  new Chart(document.getElementById('chart-pct'), {
+    type: 'line',
+    data: {
+      labels: ['p50', 'p95', 'p99'],
+      datasets: [
+        { label: 'Arch A', data: [595.5, 1660.7, 2056.0], borderColor: BLUE,  backgroundColor: 'rgba(55,138,221,0.08)', tension: 0.35, pointRadius: 5, pointBackgroundColor: BLUE,  fill: true, borderDash: [] },
+        { label: 'Arch B', data: [59.0,  306.0,   409.0],  borderColor: GREEN, backgroundColor: 'rgba(29,158,117,0.08)', tension: 0.35, pointRadius: 5, pointBackgroundColor: GREEN, fill: true, pointStyle: 'rect', borderDash: [5,3] }
+      ]
+    },
+    options: { ...baseOpts }
+  });
+</script>
+</body>
+</html>

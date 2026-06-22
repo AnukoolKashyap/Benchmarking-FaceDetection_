@@ -601,9 +601,213 @@ def write_plots(path: Path, arr_a: dict, arr_b: dict, meta_a: dict, meta_b: dict
     print(f"[plots] saved → {path}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
+def write_html_report(path: Path, arr_a: dict, arr_b: dict, meta_a: dict, meta_b: dict, args, plot_path: Path):
+    """
+    Generates a self-contained HTML report with embedded Chart.js charts and,
+    if the matplotlib plot was generated, embeds it as a base64 inline image.
+    Open the output file in any browser — no server needed.
+    """
+    import base64
+    from datetime import datetime
+
+    def s(arr, key):
+        """Shorthand: return pstats dict for a key, or zeros if missing."""
+        if key in arr and len(arr[key]) > 0:
+            return pstats(arr[key])
+        return dict(mean=0, p50=0, p95=0, p99=0, min=0, max=0, count=0)
+
+    def fmt(v): return f"{v:.1f}"
+
+    # Embed the matplotlib plot as base64 if it was saved
+    plot_b64 = ""
+    if plot_path.exists():
+        with open(plot_path, "rb") as f:
+            plot_b64 = base64.b64encode(f.read()).decode()
+
+    run_date = datetime.now().strftime("%d %b %Y, %H:%M")
+    mode_str = "Synthetic frames" if getattr(args, "simulate", False) else getattr(args, "rtsp_url", "RTSP")
+
+    sa = {k: s(arr_a, k) for k in ["capture_ms","wait_ms","inference_ms","total_ms","queue_depth"]}
+    sb = {k: s(arr_b, k) for k in ["capture_ms","wait_ms","inference_ms","total_ms","queue_depth"]}
+
+    delta_total = np.mean(arr_b["total_ms"]) - np.mean(arr_a["total_ms"]) if "total_ms" in arr_a and "total_ms" in arr_b else 0
+    delta_wait  = np.mean(arr_b["wait_ms"])  - np.mean(arr_a["wait_ms"])  if "wait_ms"  in arr_a and "wait_ms"  in arr_b else 0
+    delta_inf   = np.mean(arr_b["inference_ms"]) - np.mean(arr_a["inference_ms"]) if "inference_ms" in arr_a and "inference_ms" in arr_b else 0
+    delta_drop  = meta_b["drop_pct"] - meta_a["drop_pct"]
+
+    speedup = (sa["total_ms"]["mean"] / sb["total_ms"]["mean"]) if sb["total_ms"]["mean"] > 0 else 0
+
+    plot_section = f"""
+    <p class="section-label">matplotlib output (6-panel chart)</p>
+    <img src="data:image/png;base64,{plot_b64}" alt="6-panel benchmark comparison chart" style="width:100%; border-radius:var(--radius); border:0.5px solid var(--border); margin-bottom:1.5rem;">
+    """ if plot_b64 else ""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmark Report — RTSP Face Detection</title>
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  :root {{
+    --blue:#378ADD; --green:#1D9E75; --red:#D85A30;
+    --bg:#ffffff; --bg2:#f5f5f3; --bg3:#ebebea;
+    --text:#1a1a19; --text2:#5f5e5a; --text3:#888780;
+    --border:rgba(0,0,0,0.10); --radius:10px;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{ --bg:#1e1e1c; --bg2:#2a2a28; --bg3:#323230; --text:#e8e6e0; --text2:#a8a7a1; --text3:#6e6d69; --border:rgba(255,255,255,0.10); }}
+  }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }}
+  .page {{ max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }}
+  .page-title {{ font-size: 22px; font-weight: 500; margin-bottom: 4px; }}
+  .page-sub {{ font-size: 13px; color: var(--text2); margin-bottom: 1.25rem; }}
+  .meta-row {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 0.5px solid var(--border); }}
+  .meta-chip {{ background: var(--bg2); border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--text2); }}
+  .meta-chip b {{ color: var(--text); font-weight: 500; }}
+  .section-label {{ font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text3); margin: 2rem 0 0.75rem; }}
+  .kpi-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }}
+  .kpi {{ background: var(--bg2); border-radius: var(--radius); padding: 0.9rem 1rem; }}
+  .kpi-label {{ font-size: 11px; color: var(--text3); margin-bottom: 4px; }}
+  .kpi-val {{ font-size: 24px; font-weight: 500; line-height: 1.1; }}
+  .kpi-sub {{ font-size: 11px; margin-top: 3px; }}
+  .good {{ color: var(--green); }} .bad {{ color: var(--red); }}
+  .arch-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
+  .arch-card {{ background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 1rem 1.1rem; }}
+  .arch-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 0.75rem; }}
+  .dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
+  .arch-title {{ font-size: 13px; font-weight: 500; }}
+  .tag {{ font-size: 10px; padding: 2px 7px; border-radius: 4px; margin-left: auto; }}
+  .tag-bad {{ background:#fce8e1; color:#993c1d; }} .tag-good {{ background:#e1f5ee; color:#0f6e56; }}
+  @media (prefers-color-scheme: dark) {{ .tag-bad {{ background:#4a1b0c; color:#f0997b; }} .tag-good {{ background:#04342c; color:#5dcaa5; }} }}
+  .pill-row {{ display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }}
+  .pill {{ font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--bg2); color: var(--text2); }}
+  .stat-table {{ width: 100%; font-size: 11px; border-collapse: collapse; }}
+  .stat-table th {{ text-align: left; color: var(--text3); font-weight: 400; padding: 3px 4px 3px 0; border-bottom: 0.5px solid var(--border); }}
+  .stat-table th:not(:first-child) {{ text-align: right; }}
+  .stat-table td {{ padding: 4px 4px 4px 0; color: var(--text2); border-bottom: 0.5px solid var(--border); }}
+  .stat-table td:not(:first-child) {{ text-align: right; color: var(--text); }}
+  .stat-table tr:last-child td {{ border-bottom: none; }}
+  .chart-wrap {{ position: relative; width: 100%; }}
+  .legend {{ display: flex; gap: 16px; margin-bottom: 8px; font-size: 12px; color: var(--text2); }}
+  .legend span {{ display: flex; align-items: center; gap: 6px; }}
+  .leg-box {{ width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }}
+  .delta-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }}
+  .delta-card {{ background: var(--bg2); border-radius: var(--radius); padding: 0.8rem 1rem; }}
+  .delta-label {{ font-size: 11px; color: var(--text3); margin-bottom: 4px; }}
+  .delta-val {{ font-size: 20px; font-weight: 500; color: var(--green); }}
+  .takeaway-list {{ display: flex; flex-direction: column; gap: 8px; }}
+  .takeaway {{ background: var(--bg2); border-left: 3px solid var(--border); border-radius: 0 var(--radius) var(--radius) 0; padding: 0.7rem 1rem; font-size: 13px; color: var(--text2); }}
+  .takeaway b {{ color: var(--text); font-weight: 500; }}
+  .win {{ border-left-color: var(--green); }} .warn {{ border-left-color: var(--red); }} .insight {{ border-left-color: var(--blue); }}
+  .footer {{ margin-top: 3rem; padding-top: 1rem; border-top: 0.5px solid var(--border); display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); }}
+  @media (max-width: 600px) {{ .kpi-grid, .arch-grid, .delta-grid {{ grid-template-columns: 1fr 1fr; }} }}
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="page-title">Benchmark report — RTSP face detection pipeline</p>
+  <p class="page-sub">Bounded queue vs parallel workers &nbsp;·&nbsp; {args.duration}s measurement window &nbsp;·&nbsp; {args.warmup}s warmup discarded</p>
+  <div class="meta-row">
+    <div class="meta-chip"><b>Model</b> &nbsp;{args.model}</div>
+    <div class="meta-chip"><b>imgsz</b> &nbsp;{args.imgsz} px</div>
+    <div class="meta-chip"><b>Confidence</b> &nbsp;{args.conf}</div>
+    <div class="meta-chip"><b>FPS target</b> &nbsp;{args.fps}</div>
+    <div class="meta-chip"><b>Workers (Arch B)</b> &nbsp;{args.num_workers}</div>
+    <div class="meta-chip"><b>Queue maxlen (A)</b> &nbsp;{args.queue_maxlen}</div>
+    <div class="meta-chip"><b>Source</b> &nbsp;{mode_str}</div>
+    <div class="meta-chip"><b>Run date</b> &nbsp;{run_date}</div>
+  </div>
+
+  <p class="section-label">headline numbers</p>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-label">End-to-end latency — Arch A</div><div class="kpi-val bad">{fmt(sa["total_ms"]["mean"])} ms</div><div class="kpi-sub bad">mean total</div></div>
+    <div class="kpi"><div class="kpi-label">End-to-end latency — Arch B</div><div class="kpi-val good">{fmt(sb["total_ms"]["mean"])} ms</div><div class="kpi-sub good">{speedup:.1f}× faster</div></div>
+    <div class="kpi"><div class="kpi-label">Drop rate — Arch A</div><div class="kpi-val bad">{meta_a["drop_pct"]:.1f}%</div><div class="kpi-sub bad">{meta_a["dropped"]} of {meta_a["produced"]} frames lost</div></div>
+    <div class="kpi"><div class="kpi-label">Drop rate — Arch B</div><div class="kpi-val good">{meta_b["drop_pct"]:.1f}%</div><div class="kpi-sub good">{"zero frames dropped" if meta_b["dropped"] == 0 else str(meta_b["dropped"]) + " dropped"}</div></div>
+  </div>
+
+  <p class="section-label">per-architecture breakdown</p>
+  <div class="arch-grid">
+    <div class="arch-card">
+      <div class="arch-header"><span class="dot" style="background:var(--blue)"></span><span class="arch-title">Architecture A — bounded queue</span><span class="tag tag-bad">single consumer</span></div>
+      <div class="pill-row"><span class="pill">{meta_a["processed"]} processed</span><span class="pill">{meta_a["produced"]} produced</span><span class="pill bad">{meta_a["dropped"]} dropped ({meta_a["drop_pct"]:.1f}%)</span><span class="pill">{meta_a["throughput"]:.2f} fps</span></div>
+      <table class="stat-table">
+        <tr><th>Metric</th><th>Mean</th><th>p50</th><th>p95</th><th>p99</th></tr>
+        <tr><td>Capture (ms)</td><td>{fmt(sa["capture_ms"]["mean"])}</td><td>{fmt(sa["capture_ms"]["p50"])}</td><td>{fmt(sa["capture_ms"]["p95"])}</td><td>{fmt(sa["capture_ms"]["p99"])}</td></tr>
+        <tr><td>Queue wait (ms)</td><td style="color:var(--red);font-weight:500">{fmt(sa["wait_ms"]["mean"])}</td><td>{fmt(sa["wait_ms"]["p50"])}</td><td>{fmt(sa["wait_ms"]["p95"])}</td><td>{fmt(sa["wait_ms"]["p99"])}</td></tr>
+        <tr><td>Inference (ms)</td><td>{fmt(sa["inference_ms"]["mean"])}</td><td>{fmt(sa["inference_ms"]["p50"])}</td><td>{fmt(sa["inference_ms"]["p95"])}</td><td>{fmt(sa["inference_ms"]["p99"])}</td></tr>
+        <tr style="font-weight:500"><td>Total (ms)</td><td>{fmt(sa["total_ms"]["mean"])}</td><td>{fmt(sa["total_ms"]["p50"])}</td><td>{fmt(sa["total_ms"]["p95"])}</td><td>{fmt(sa["total_ms"]["p99"])}</td></tr>
+        <tr><td>Queue depth</td><td>{fmt(sa["queue_depth"]["mean"])}</td><td>{fmt(sa["queue_depth"]["p50"])}</td><td>{fmt(sa["queue_depth"]["p95"])}</td><td>{fmt(sa["queue_depth"]["p99"])}</td></tr>
+      </table>
+    </div>
+    <div class="arch-card">
+      <div class="arch-header"><span class="dot" style="background:var(--green)"></span><span class="arch-title">Architecture B — parallel workers</span><span class="tag tag-good">{args.num_workers} workers</span></div>
+      <div class="pill-row"><span class="pill">{meta_b["processed"]} processed</span><span class="pill">{meta_b["produced"]} produced</span><span class="pill good">{meta_b["dropped"]} dropped ({meta_b["drop_pct"]:.1f}%)</span><span class="pill">{meta_b["throughput"]:.2f} fps</span></div>
+      <table class="stat-table">
+        <tr><th>Metric</th><th>Mean</th><th>p50</th><th>p95</th><th>p99</th></tr>
+        <tr><td>Capture (ms)</td><td>{fmt(sb["capture_ms"]["mean"])}</td><td>{fmt(sb["capture_ms"]["p50"])}</td><td>{fmt(sb["capture_ms"]["p95"])}</td><td>{fmt(sb["capture_ms"]["p99"])}</td></tr>
+        <tr><td>Queue wait (ms)</td><td style="color:var(--green);font-weight:500">{fmt(sb["wait_ms"]["mean"])}</td><td>{fmt(sb["wait_ms"]["p50"])}</td><td>{fmt(sb["wait_ms"]["p95"])}</td><td>{fmt(sb["wait_ms"]["p99"])}</td></tr>
+        <tr><td>Inference (ms)</td><td>{fmt(sb["inference_ms"]["mean"])}</td><td>{fmt(sb["inference_ms"]["p50"])}</td><td>{fmt(sb["inference_ms"]["p95"])}</td><td>{fmt(sb["inference_ms"]["p99"])}</td></tr>
+        <tr style="font-weight:500"><td>Total (ms)</td><td>{fmt(sb["total_ms"]["mean"])}</td><td>{fmt(sb["total_ms"]["p50"])}</td><td>{fmt(sb["total_ms"]["p95"])}</td><td>{fmt(sb["total_ms"]["p99"])}</td></tr>
+        <tr><td>Queue depth</td><td>{fmt(sb["queue_depth"]["mean"])}</td><td>{fmt(sb["queue_depth"]["p50"])}</td><td>{fmt(sb["queue_depth"]["p95"])}</td><td>{fmt(sb["queue_depth"]["p99"])}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <p class="section-label">latency by stage</p>
+  <div class="legend">
+    <span><span class="leg-box" style="background:var(--blue)"></span>Architecture A — bounded queue</span>
+    <span><span class="leg-box" style="background:var(--green)"></span>Architecture B — parallel workers</span>
+  </div>
+  <div class="chart-wrap" style="height:260px; margin-bottom:1.5rem;">
+    <canvas id="chart-stages" role="img" aria-label="Grouped bar chart comparing latency stages between both architectures">Capture A={fmt(sa["capture_ms"]["mean"])}ms B={fmt(sb["capture_ms"]["mean"])}ms. Queue wait A={fmt(sa["wait_ms"]["mean"])}ms B={fmt(sb["wait_ms"]["mean"])}ms. Inference A={fmt(sa["inference_ms"]["mean"])}ms B={fmt(sb["inference_ms"]["mean"])}ms.</canvas>
+  </div>
+
+  <p class="section-label">total latency percentiles</p>
+  <div class="chart-wrap" style="height:220px; margin-bottom:1.5rem;">
+    <canvas id="chart-pct" role="img" aria-label="Line chart of p50 p95 p99 latency for both architectures">Architecture A p50={fmt(sa["total_ms"]["p50"])}ms p95={fmt(sa["total_ms"]["p95"])}ms p99={fmt(sa["total_ms"]["p99"])}ms. Architecture B p50={fmt(sb["total_ms"]["p50"])}ms p95={fmt(sb["total_ms"]["p95"])}ms p99={fmt(sb["total_ms"]["p99"])}ms.</canvas>
+  </div>
+
+  <p class="section-label">head-to-head delta (B minus A · negative = B is better)</p>
+  <div class="delta-grid">
+    <div class="delta-card"><div class="delta-label">Total latency</div><div class="delta-val">{delta_total:+.1f} ms</div></div>
+    <div class="delta-card"><div class="delta-label">Queue wait</div><div class="delta-val">{delta_wait:+.1f} ms</div></div>
+    <div class="delta-card"><div class="delta-label">Inference</div><div class="delta-val">{delta_inf:+.1f} ms</div></div>
+    <div class="delta-card"><div class="delta-label">Drop rate</div><div class="delta-val">{delta_drop:+.1f} pp</div></div>
+  </div>
+
+  {plot_section}
+
+  <div class="footer">
+    <span>RTSP-FaceDetection_Transline &nbsp;·&nbsp; AnukoolKashyap</span>
+    <span>Generated {run_date}</span>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const grid = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  const ticks = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)';
+  const opts = {{ responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}}}, scales:{{ x:{{ticks:{{color:ticks,font:{{size:11}}}},grid:{{color:grid}},border:{{color:grid}}}}, y:{{ticks:{{color:ticks,font:{{size:11}},callback:v=>v+' ms'}},grid:{{color:grid}},border:{{color:grid}}}} }} }};
+  new Chart(document.getElementById('chart-stages'), {{ type:'bar', data:{{ labels:['Capture','Queue wait','Inference','Total'], datasets:[
+    {{ label:'Arch A', data:[{fmt(sa["capture_ms"]["mean"])},{fmt(sa["wait_ms"]["mean"])},{fmt(sa["inference_ms"]["mean"])},{fmt(sa["total_ms"]["mean"])}], backgroundColor:'#378ADD', borderRadius:4 }},
+    {{ label:'Arch B', data:[{fmt(sb["capture_ms"]["mean"])},{fmt(sb["wait_ms"]["mean"])},{fmt(sb["inference_ms"]["mean"])},{fmt(sb["total_ms"]["mean"])}], backgroundColor:'#1D9E75', borderRadius:4 }}
+  ]}}, options:opts }});
+  new Chart(document.getElementById('chart-pct'), {{ type:'line', data:{{ labels:['p50','p95','p99'], datasets:[
+    {{ label:'Arch A', data:[{fmt(sa["total_ms"]["p50"])},{fmt(sa["total_ms"]["p95"])},{fmt(sa["total_ms"]["p99"])}], borderColor:'#378ADD', backgroundColor:'rgba(55,138,221,0.08)', tension:0.35, pointRadius:5, pointBackgroundColor:'#378ADD', fill:true }},
+    {{ label:'Arch B', data:[{fmt(sb["total_ms"]["p50"])},{fmt(sb["total_ms"]["p95"])},{fmt(sb["total_ms"]["p99"])}], borderColor:'#1D9E75', backgroundColor:'rgba(29,158,117,0.08)', tension:0.35, pointRadius:5, pointBackgroundColor:'#1D9E75', fill:true, borderDash:[5,3] }}
+  ]}}, options:opts }});
+</script>
+</body>
+</html>"""
+
+    path.write_text(html, encoding="utf-8")
+    print(f"[html]  saved → {path}")
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -674,7 +878,11 @@ def main():
     write_report(out / "benchmark_report.txt", arr_a, arr_b, meta_a, meta_b, args)
 
     # ── Plots ──
-    write_plots(out / "benchmark_plots.png", arr_a, arr_b, meta_a, meta_b)
+    plot_path = out / "benchmark_plots.png"
+    write_plots(plot_path, arr_a, arr_b, meta_a, meta_b)
+
+    # ── HTML report ──
+    write_html_report(out / "benchmark_report.html", arr_a, arr_b, meta_a, meta_b, args, plot_path)
 
     # ── Raw JSON ──
     raw = {
