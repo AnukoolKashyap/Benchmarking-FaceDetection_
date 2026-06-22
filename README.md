@@ -45,7 +45,7 @@ See [`rtsp_face_pipeline_architecture.md`](rtsp_face_pipeline_architecture.md) f
 **1. Clone the repo**
 
 ```bash
-git clone https://github.com/hemish22/face-detection.git
+git clone https://github.com/AnukoolKashyap/RTSP-FaceDetection_Transline.git
 cd face-detection
 ```
 
