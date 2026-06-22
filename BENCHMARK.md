@@ -122,9 +122,9 @@ The `.json` file contains full arrays of every per-frame measurement, useful for
 
 **Test environment:**
 - Camera: CP IP Cam · 2560×1440 · ~25 fps native
-- Hardware: Windows 10, CPU inference (no GPU)
+- Hardware: Windows 11, CPU inference (no GPU)
 - Model: `yolov8n-face.pt` (WIDERFACE fine-tuned, nano variant)
-- Date: 18 Jun 2026
+- Date: 22 Jun 2026
 
 ### Headline numbers
 
