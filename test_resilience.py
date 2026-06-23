@@ -1,69 +1,77 @@
 """
 test_resilience.py
 
-Tests the connection-loss resilience of RTSPFrameGrabber and GapLogger
+Tests connection-loss resilience of RTSPFrameGrabber and GapLogger
 without needing a real RTSP camera.
 
 Simulates:
   0s  — stream starts healthy
-  2s  — stream drops (cap.read returns ok=False)
+  2s  — stream drops (read returns False)
   5s  — stream reconnects
-  8s  — script stops, summary written
+  7s  — stop, session summary written
 
 Run:
     python test_resilience.py
-
-Expected result: PASSED for all three checks.
 """
 
 import json
 import shutil
 import tempfile
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 
-# ── import the classes we want to test ────────────────────────────────────────
 from rtsp_face_capture import GapLogger, RTSPFrameGrabber, write_session_summary
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mock VideoCapture — controls exactly when read() succeeds or fails
+# Shared stream state — a list so threads can mutate it
+# ─────────────────────────────────────────────────────────────────────────────
+
+stream_up = [True]   # [0] is read/written by both the test thread and the grabber thread
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MockCapture
+#
+# Key design: each time cv2.VideoCapture() is called (i.e. each _connect()
+# attempt), a NEW MockCapture instance is created.  The instance snapshots
+# stream_up[0] at the moment it was created — that is what isOpened() returns.
+#
+# Why this works:
+#   • Healthy stream  → new cap created while stream_up=True  → isOpened()=True
+#                       → read() returns a frame
+#   • After drop      → existing cap still has _connected=True → isOpened()=True
+#                       → read() returns (False,None) → _on_drop() fires ✓
+#                       → release() marks this instance dead
+#   • Reconnect retry → new cap created while stream_up=False → isOpened()=False
+#                       → _connect() returns False → grabber keeps retrying ✓
+#   • Stream back up  → new cap created while stream_up=True  → isOpened()=True
+#                       → read() returns a frame → _on_reconnect() fires ✓
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MockCapture:
-    """
-    Pretends to be cv2.VideoCapture.
-    stream_up controls whether read() returns a real frame or (False, None).
-
-    isOpened() mirrors stream_up so the grabber's reconnect logic works:
-      - stream_up=True  → isOpened()=True  → read() returns a frame
-      - stream_up=False → read() returns (False,None) → grabber calls release()
-                          then retries _connect() → isOpened()=False → keeps retrying
-      - stream_up=True again → _connect() sees isOpened()=True → reconnected
-    release() is a no-op so the same object is reused across reconnect cycles.
-    """
-    def __init__(self):
-        self.stream_up = True
+    def __init__(self, *args, **kwargs):
+        # Snapshot stream state at the moment of this "connection attempt"
+        self._connected = stream_up[0]
+        self._released  = False
 
     def isOpened(self):
-        return self.stream_up
+        return self._connected and not self._released
 
     def set(self, *args):
         pass
 
     def read(self):
-        if not self.stream_up:
+        if not stream_up[0]:
             return False, None
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        return True, frame
+        return True, np.zeros((480, 640, 3), dtype=np.uint8)
 
     def release(self):
-        pass  # state is controlled entirely by stream_up
+        self._released = True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -78,54 +86,56 @@ def run_test():
     tmp = Path(tempfile.mkdtemp())
     print(f"  Output folder : {tmp}\n")
 
-    mock_cap = MockCapture()
+    # Reset shared state
+    stream_up[0] = True
 
-    # Patch cv2.VideoCapture so the grabber uses our mock instead
-    with patch("rtsp_face_capture.cv2.VideoCapture", return_value=mock_cap):
+    # side_effect=MockCapture means every cv2.VideoCapture() call
+    # instantiates a fresh MockCapture — critical for the snapshot logic above
+    with patch("rtsp_face_capture.cv2.VideoCapture", side_effect=MockCapture):
 
         gap_logger = GapLogger(tmp / "session_gaps.jsonl")
         grabber    = RTSPFrameGrabber(
             rtsp_url="rtsp://fake-url",
             gap_logger=gap_logger,
-            reconnect_delay=0.3,    # short delay so test runs fast
+            reconnect_delay=0.3,
         )
         grabber.start()
 
         # ── Phase 1: healthy stream for 2 seconds ─────────────────────────
         print("  [0s] stream healthy...")
         time.sleep(2)
-        assert grabber.is_streaming, "grabber should be STREAMING after 2s"
-        frame = grabber.get_latest_frame()
-        assert frame is not None, "should have a frame during healthy stream"
+        assert grabber.is_streaming, "grabber should be STREAMING"
+        assert grabber.get_latest_frame() is not None, "should have a frame"
         print("  [2s] frame received OK")
 
-        # ── Phase 2: simulate a drop ───────────────────────────────────────
+        # ── Phase 2: simulate drop ─────────────────────────────────────────
         print("  [2s] simulating connection drop...")
-        mock_cap.stream_up = False
+        stream_up[0] = False
+        # Give the grabber thread time to call read(), get False, and
+        # transition state.  reconnect_delay=0.3s so 1.5s is plenty.
         time.sleep(1.5)
-        # grabber should have detected the drop and transitioned to RECONNECTING
-        assert not grabber.is_streaming, "grabber should NOT be streaming after drop"
+        assert not grabber.is_streaming, \
+            "grabber should NOT be streaming after drop"
         print("  [3.5s] drop detected correctly")
 
         # ── Phase 3: simulate reconnect ────────────────────────────────────
         print("  [3.5s] simulating reconnect...")
-        mock_cap.stream_up = True
-        mock_cap._open     = True
+        stream_up[0] = True
         time.sleep(2)
-        assert grabber.is_streaming, "grabber should be STREAMING after reconnect"
+        assert grabber.is_streaming, \
+            "grabber should be STREAMING after reconnect"
         print("  [5.5s] reconnect detected correctly")
 
-        # ── Phase 4: run a bit more, then stop ────────────────────────────
+        # ── Phase 4: run a moment longer then stop ─────────────────────────
         time.sleep(1)
         grabber.stop()
 
-    # ── Write session summary ──────────────────────────────────────────────
-    start_time = datetime.now()
-    write_session_summary(tmp, start_time, frames_saved=12, faces_total=15)
+    # ── Session summary ────────────────────────────────────────────────────
+    write_session_summary(tmp, datetime.now(), frames_saved=12, faces_total=15)
 
-    # ── Read and verify the gap log ────────────────────────────────────────
+    # ── Read gap log ───────────────────────────────────────────────────────
     gaps_path = tmp / "session_gaps.jsonl"
-    assert gaps_path.exists(), "session_gaps.jsonl should exist"
+    assert gaps_path.exists(), "session_gaps.jsonl missing"
 
     events = []
     with open(gaps_path, encoding="utf-8") as f:
@@ -137,9 +147,9 @@ def run_test():
     event_types = [e["event"] for e in events]
     print(f"\n  Gap events recorded : {event_types}")
 
-    # ── Read and verify the session summary ───────────────────────────────
+    # ── Read session summary ───────────────────────────────────────────────
     summary_path = tmp / "session_summary.json"
-    assert summary_path.exists(), "session_summary.json should exist"
+    assert summary_path.exists(), "session_summary.json missing"
 
     with open(summary_path, encoding="utf-8") as f:
         summary = json.load(f)
@@ -161,9 +171,9 @@ def run_test():
 
     check(
         "Gap events logged correctly",
-        "connected" in event_types and
+        "connected"    in event_types and
         "disconnected" in event_types and
-        "reconnected" in event_types,
+        "reconnected"  in event_types,
         f"got: {event_types}"
     )
 
@@ -176,19 +186,19 @@ def run_test():
     check(
         "Session summary has correct frame counts",
         summary["frames_saved"] == 12 and summary["faces_detected"] == 15,
-        f"frames_saved={summary['frames_saved']}  faces_detected={summary['faces_detected']}"
+        f"frames_saved={summary['frames_saved']}  "
+        f"faces_detected={summary['faces_detected']}"
     )
 
     # ── Cleanup ───────────────────────────────────────────────────────────
     shutil.rmtree(tmp)
 
-    # ── Final result ──────────────────────────────────────────────────────
+    # ── Result ────────────────────────────────────────────────────────────
     print(f"\n{'='*55}")
     if all(results):
         print("  ALL CHECKS PASSED ✓")
     else:
-        failed = results.count(False)
-        print(f"  {failed} CHECK(S) FAILED — see above")
+        print(f"  {results.count(False)} CHECK(S) FAILED — see above")
     print("=" * 55)
 
     return all(results)
