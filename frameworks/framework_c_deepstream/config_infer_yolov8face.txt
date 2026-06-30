@@ -1,0 +1,14 @@
+[property]
+gpu-id=0
+model-engine-file=../../models/yolov8n-face-jetson.engine
+net-scale-factor=0.00392156862745098
+model-color-format=0
+batch-size=1
+network-mode=0
+process-mode=1
+gie-unique-id=1
+infer-dims=3;640;640
+interval=0
+is-classifier=1
+classifier-threshold=0.45
+output-tensor-meta=1
