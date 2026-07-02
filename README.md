@@ -36,7 +36,7 @@ All three frameworks run the **same YOLOv8-face model**, on the **same hardware*
 
 ```
 frameworks/
-├── framework_a_ffmpeg/          FFmpeg (PyAV) + TensorRT Python API
+├── framework_a_ffmpeg/          FFmpeg (PyAV) + TensorRT Python API   → see framework_a_ffmpeg/README.md
 │   ├── benchmark_offline.py     GPU vs CPU decode benchmark on .dav files
 │   ├── save_face_crops_a.py     saves cropped face detections to disk
 │   ├── config.py
@@ -44,7 +44,7 @@ frameworks/
 │       ├── trt_inference.py     TensorRT 10/11 engine wrapper (Jetson CUDA-context safe)
 │       └── frame_saver.py
 │
-├── framework_b_gstreamer/       GStreamer + TensorRT Python API
+├── framework_b_gstreamer/       GStreamer + TensorRT Python API       → see framework_b_gstreamer/README.md
 │   ├── benchmark_b_offline.py   GStreamer decode benchmark on .dav files
 │   ├── accuracy_comparison.py   frame-level accuracy comparison vs Framework A
 │   ├── save_face_crops_b.py     saves cropped face detections to disk
@@ -62,6 +62,10 @@ frameworks/
 ├── results/                     benchmark CSV / JSON / summary outputs
 └── results2/                    cropped face detection images per framework
 ```
+
+**Per-framework documentation:**
+- [Framework A — FFmpeg + TensorRT README](frameworks/framework_a_ffmpeg/README.md)
+- [Framework B — GStreamer + TensorRT README](frameworks/framework_b_gstreamer/README.md)
 
 ---
 
