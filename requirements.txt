@@ -1,2 +1,36 @@
-ultralytics>=8.0.0
+# Real-Time Video Analytics Framework Benchmarking — requirements
+#
+# Install inside a venv on the target Jetson (or Windows dev machine).
+# On Jetson, create the venv with --system-site-packages so it can see
+# system-installed packages: gi (GStreamer bindings), tensorrt, pyds
+#
+#   python3 -m venv venv --system-site-packages
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+#
+# NOT included here (must already exist on the system / cannot be pip installed):
+#   - tensorrt          (comes with JetPack / DeepStream install)
+#   - gi (PyGObject)    (comes with system GStreamer install)
+#   - pyds              (DeepStream Python bindings, install separately if using
+#                         Framework C's Python metadata access — see
+#                         https://github.com/NVIDIA-AI-IOT/deepstream_python_apps)
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+numpy==1.26.4          # pinned — required for pyds/DeepStream compatibility
 opencv-python>=4.8.0
+pycuda>=2024.1
+
+# ── Framework A (FFmpeg/PyAV) ──────────────────────────────────────────────────
+av>=12.0.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0   # optional — only needed if using .env for RTSP credentials
+
+# ── Benchmarking / reporting ────────────────────────────────────────────────────
+matplotlib>=3.7.0      # for benchmark comparison charts
+
+# ── Model export (only needed if re-exporting/rebuilding the ONNX model) ───────
+# ultralytics>=8.4.0
+# onnx>=1.16.0
+# onnxslim>=0.1.0
+# onnxruntime>=1.18.0
